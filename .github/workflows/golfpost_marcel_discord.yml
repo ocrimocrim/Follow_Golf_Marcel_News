@@ -1,8 +1,8 @@
-name: Golfpost Marcel Schneider Monitor
+name: Golfpost Marcel Schneider Monitor Discord
 
 on:
   schedule:
-    # Alle zwei Stunden zwischen 7 und 21 Uhr deutscher Zeit (5–19 UTC)
+    # Alle zwei Stunden zwischen 7 und 21 Uhr deutscher Zeit, entspricht 5–19 UTC
     - cron: "0 5-19/2 * * *"
   workflow_dispatch:
 
@@ -13,10 +13,10 @@ jobs:
   check-feed:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python installieren
+      - name: Python einrichten
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -26,18 +26,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests feedparser
 
-      - name: RSS-Feed prüfen und Teams benachrichtigen
+      - name: Feed prüfen und auf Discord posten
         env:
-          TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
-          python rss_monitor.py
+          python rss_monitor_discord.py
 
-      - name: Status speichern, wenn Änderungen gefunden wurden
+      - name: Zustand committen falls geändert
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [[ -n "$(git status --porcelain)" ]]; then
             git add known_ids.json .etag .lastmod || true
-            git commit -m "Update Feed-Status"
+            git commit -m "Update feed state"
             git push
           fi
