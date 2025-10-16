@@ -2,7 +2,8 @@ name: Golfpost Marcel Schneider Monitor
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # alle 30 Minuten
+    # Alle zwei Stunden zwischen 7 und 21 Uhr deutscher Zeit (5–19 UTC)
+    - cron: "0 5-19/2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -12,31 +13,31 @@ jobs:
   check-feed:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Python installieren
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
           pip install requests feedparser
 
-      - name: Fetch and notify
+      - name: RSS-Feed prüfen und Teams benachrichtigen
         env:
           TEAMS_WEBHOOK: ${{ secrets.TEAMS_WEBHOOK }}
         run: |
           python rss_monitor.py
 
-      - name: Commit state if changed
+      - name: Status speichern, wenn Änderungen gefunden wurden
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           if [[ -n "$(git status --porcelain)" ]]; then
             git add known_ids.json .etag .lastmod || true
-            git commit -m "Update feed state"
+            git commit -m "Update Feed-Status"
             git push
           fi
