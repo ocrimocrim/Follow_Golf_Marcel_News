@@ -11,12 +11,11 @@ STATE_FILE = "known_ids.json"
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK")
 UA = {"User-Agent": "github-action-golfpost-marcel-discord"}
 
-# Optionales Verhalten ohne Codeänderung steuerbar
-# Wenn du beim allerersten Lauf trotz Baseline einen Startpost willst, setze im Repo-Secret POST_ON_INIT=true
-POST_ON_INIT = os.environ.get("POST_ON_INIT", "").lower() in {"1", "true", "yes"}
+def state_exists() -> bool:
+    return os.path.exists(STATE_FILE)
 
 def load_state():
-    if os.path.exists(STATE_FILE):
+    if state_exists():
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 return set(json.load(f).get("ids", []))
@@ -39,11 +38,8 @@ def fetch_feed():
             modified = f.read().strip() or None
 
     d = feedparser.parse(FEED_URL, etag=etag, modified=modified)
-    # 304 bedeutet keine Änderung
-    if getattr(d, "status", 200) == 304:
-        return d
 
-    # ETag und Last-Modified aktualisieren
+    # Etags und Last-Modified aktualisieren, damit beim Initiallauf Dateien entstehen
     if d.get("etag"):
         with open(".etag", "w", encoding="utf-8") as f:
             f.write(d.etag)
@@ -65,16 +61,17 @@ def build_embed(title, url, summary, published):
 
     if summary:
         summary = summary.strip()
-    if summary and len(summary) > 300:
-        summary = summary[:297] + "..."
+        if len(summary) > 300:
+            summary = summary[:297] + "..."
 
-    return {
+    embed = {
         "title": title or "Neuer Artikel",
         "url": url or "",
         "description": summary or "",
         "timestamp": ts or datetime.now(timezone.utc).isoformat(),
         "footer": {"text": "Golfpost Marcel Schneider"},
     }
+    return embed
 
 def post_discord(payload):
     if not DISCORD_WEBHOOK:
@@ -82,7 +79,6 @@ def post_discord(payload):
     backoff = 5
     for _ in range(6):
         r = requests.post(DISCORD_WEBHOOK, json=payload, headers=UA, timeout=20)
-        # Discord antwortet 204 bei Erfolg
         if r.status_code == 204 or (200 <= r.status_code < 300):
             return
         if r.status_code == 429:
@@ -98,8 +94,63 @@ def post_discord(payload):
         r.raise_for_status()
     raise RuntimeError("Discord Webhook dauerhaft fehlgeschlagen")
 
-def init_baseline_if_needed(feed):
-    # Legt Baseline an, wenn STATE_FILE fehlt
-    if os.path.exists(STATE_FILE):
-        return False  # keine Baseline nötig
-    ids
+def main():
+    # Jitter gegen gleichzeitige Ausführungen
+    time.sleep(random.randint(0, 120))
+
+    first_run = not state_exists()
+    known = load_state()
+
+    feed = fetch_feed()
+    entries = feed.get("entries", [])
+
+    # Beim ersten Lauf Baseline setzen ohne alte Artikel zu posten
+    if first_run:
+        ids = []
+        for e in entries:
+            guid = e.get("id") or e.get("guid") or e.get("link")
+            if guid:
+                ids.append(guid)
+        save_state(set(ids))
+        # kurze Bestätigung in Discord, damit du siehst, dass der Monitor aktiv ist
+        try:
+            post_discord({"content": f"Monitor aktiv. Baseline gesetzt mit {len(ids)} Artikeln."})
+        except Exception:
+            # Falls kein Webhook gesetzt ist oder blockiert wurde, soll der Lauf trotzdem sauber enden
+            pass
+        print(f"Baseline gesetzt mit {len(ids)} Artikeln.")
+        return
+
+    # Normalbetrieb
+    new_items = []
+    for e in entries:
+        guid = e.get("id") or e.get("guid") or e.get("link")
+        if not guid or guid in known:
+            continue
+        title = e.get("title")
+        url = e.get("link") or ""
+        summary = e.get("summary") or e.get("subtitle")
+        published = e.get("published_parsed")
+        new_items.append((guid, title, url, summary, published))
+
+    # Neueste zuerst posten
+    new_items.sort(key=lambda x: x[4] or 0, reverse=True)
+
+    for guid, title, url, summary, published in new_items:
+        embed = build_embed(title, url, summary, published)
+        payload = {
+            "content": "Neue Golfpost News zu Marcel Schneider",
+            "embeds": [embed],
+        }
+        post_discord(payload)
+        known.add(guid)
+        time.sleep(1)
+
+    if new_items:
+        save_state(known)
+        print(f"{len(new_items)} neue Artikel gepostet.")
+    else:
+        print("Keine neuen Artikel.")
+
+if __name__ == "__main__":
+    main()
